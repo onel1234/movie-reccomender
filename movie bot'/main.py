@@ -94,17 +94,23 @@ class MovieRecommender:
     def _initialize_genre_keywords(self):
         """Initialize keywords for genre identification in user queries."""
         self.genre_keywords = {
-            'funny': ['comedy', 'humor', 'laugh', 'hilarious', 'amusing', 'comical', 'funny'],
-            'action': ['action', 'thriller', 'adventure', 'explosive', 'fight', 'chase', 'exciting'],
-            'romantic': ['romance', 'love', 'relationship', 'passion', 'romantic', 'couple', 'date'],
-            'scary': ['horror', 'thriller', 'terrifying', 'scary', 'frightening', 'supernatural', 'ghost'],
-            'dramatic': ['drama', 'emotional', 'powerful', 'intense', 'moving', 'tragic', 'serious'],
-            'family': ['family', 'children', 'kids', 'animation', 'cartoon', 'disney', 'pixar'],
-            'crime': ['crime', 'detective', 'murder', 'mystery', 'police', 'criminal', 'investigation'],
-            'documentary': ['documentary', 'true story', 'real', 'history', 'actual', 'facts', 'documentary'],
-            'scifi': ['science fiction', 'sci-fi', 'space', 'future', 'alien', 'robot', 'technology']
+        'funny': ['comedy', 'humor', 'laugh', 'hilarious', 'amusing', 'comical', 'funny', 'satire', 'parody', 'slapstick', 'witty', 'comedic', 'lighthearted', 'joking', 'silly', 'quirky'],
+        'action': ['action', 'thriller', 'adventure', 'explosive', 'fight', 'chase', 'exciting', 'adrenaline', 'combat', 'stunt', 'heroic', 'battle', 'war', 'martial arts', 'explosion', 'violent', 'fast-paced', 'intense'],
+        'romantic': ['romance', 'love', 'relationship', 'passion', 'romantic', 'couple', 'date', 'heartwarming', 'wedding', 'affection', 'intimate', 'soulmate', 'chemistry', 'heartbreak', 'love story', 'sentimental', 'emotional'],
+        'scary': ['horror', 'thriller', 'terrifying', 'scary', 'frightening', 'supernatural', 'ghost', 'monster', 'creepy', 'eerie', 'haunted', 'gory', 'disturbing', 'suspense', 'slasher', 'paranormal', 'evil', 'zombie', 'vampire', 'witch'],
+        'dramatic': ['drama', 'emotional', 'powerful', 'intense', 'moving', 'tragic', 'serious', 'thought-provoking', 'complex', 'character-driven', 'psychological', 'conflict', 'storytelling', 'narrative', 'heartbreaking', 'poignant'],
+        'family': ['family', 'children', 'kids', 'animation', 'cartoon', 'disney', 'pixar', 'dreamworks', 'wholesome', 'all-ages', 'educational', 'moral', 'heartwarming', 'coming-of-age', 'rated-g', 'rated-pg', 'family-friendly'],
+        'crime': ['crime', 'detective', 'murder', 'mystery', 'police', 'criminal', 'investigation', 'heist', 'gangster', 'mafia', 'thriller', 'forensic', 'whodunit', 'conspiracy', 'corruption', 'noir', 'suspense', 'legal', 'procedural'],
+        'documentary': ['documentary', 'true story', 'real', 'history', 'actual', 'facts', 'educational', 'informative', 'biographical', 'historical', 'interview', 'journalism', 'non-fiction', 'footage', 'archive', 'social', 'political'],
+        'scifi': ['science fiction', 'sci-fi', 'space', 'future', 'alien', 'robot', 'technology', 'dystopian', 'utopian', 'futuristic', 'cyberpunk', 'time travel', 'parallel universe', 'scientific', 'extraterrestrial', 'advanced', 'spacecraft'],
+        'fantasy': ['fantasy', 'magical', 'mythical', 'enchanted', 'fairy tale', 'dragon', 'wizard', 'witch', 'elf', 'dwarf', 'medieval', 'quest', 'supernatural', 'sorcery', 'epic', 'legend', 'folklore', 'mythology'],
+        'thriller': ['thriller', 'suspense', 'tension', 'mystery', 'twist', 'intense', 'mind-bending', 'psychological', 'conspiracy', 'espionage', 'gripping', 'edgy', 'unpredictable', 'riveting', 'adrenaline', 'cat-and-mouse'],
+        'war': ['war', 'military', 'soldier', 'battle', 'combat', 'army', 'navy', 'marines', 'air force', 'historical', 'conflict', 'strategy', 'heroism', 'patriotic', 'sacrifice', 'infantry', 'propaganda', 'resistance'],
+        'western': ['western', 'cowboy', 'wild west', 'frontier', 'sheriff', 'outlaw', 'gunslinger', 'ranch', 'desert', 'saloon', 'native american', 'horseback', 'duel', 'gold rush', 'bandit', 'wilderness'],
+        'musical': ['musical', 'song', 'dance', 'singing', 'choreography', 'performance', 'broadway', 'rhythm', 'melody', 'opera', 'concert', 'band', 'artist', 'soundtrack', 'vocalist', 'instrumental', 'harmony'],
+        'sports': ['sports', 'athlete', 'competition', 'game', 'coach', 'team', 'championship', 'olympic', 'soccer', 'football', 'basketball', 'baseball', 'hockey', 'boxing', 'racing', 'underdog', 'victory', 'training']
         }
-    
+
     def _initialize_query_patterns(self):
         """Initialize common query patterns for chatbot matching."""
         self.query_patterns = {
@@ -327,7 +333,9 @@ class MovieRecommender:
             for i, (_, row) in enumerate(recommendations.iterrows(), 1):
                 year = int(row['release_year']) if not pd.isna(row['release_year']) else 'Unknown'
                 rating = round(row['vote_average'], 1) if not pd.isna(row['vote_average']) else 'N/A'
+                overview = row['overview'] if not pd.isna(row['overview']) and row['overview'] else 'No overview available.'
                 result += f"{i}. {row['original_title']} ({year}) - Rating: {rating}/10\n"
+                result += f"   Overview: {overview}\n\n"
             
             return result
             
