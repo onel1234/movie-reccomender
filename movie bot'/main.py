@@ -1,6 +1,5 @@
 data_path = 'top_rated_movies.csv' 
 
-
 import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -61,6 +60,9 @@ class MovieRecommender:
             # Define genre keywords for query matching
             self._initialize_genre_keywords()
             
+            # Initialize common query patterns
+            self._initialize_query_patterns()
+            
             print("MovieRecommender initialized successfully.")
             
         except Exception as e:
@@ -102,7 +104,28 @@ class MovieRecommender:
             'documentary': ['documentary', 'true story', 'real', 'history', 'actual', 'facts', 'documentary'],
             'scifi': ['science fiction', 'sci-fi', 'space', 'future', 'alien', 'robot', 'technology']
         }
+    
+    def _initialize_query_patterns(self):
+        """Initialize common query patterns for chatbot matching."""
+        self.query_patterns = {
+            r'(?:recommend|suggest)\s+(?:a|some)\s+(?:movie|film)(?:s)?\s+like\s+([\w\s]+)': self._handle_similar_movie,
+            r'(?:what|any|some)\s+(?:good|great|nice)\s+([\w\s]+)\s+(?:movie|film)(?:s)?': self._handle_genre_query,
+            r'(?:show|give|recommend)\s+(?:me)?\s+(?:a|some)?\s+([\w\s]+)\s+(?:movie|film)(?:s)?': self._handle_genre_query,
+            r'(?:i\s+want\s+to\s+(?:watch|see))\s+(?:a|some)?\s+([\w\s]+)\s+(?:movie|film)(?:s)?': self._handle_genre_query,
+            r'(?:i\'m|i am)\s+in\s+the\s+mood\s+for\s+(?:a|some)?\s+([\w\s]+)\s+(?:movie|film)(?:s)?': self._handle_genre_query,
+            r'(?:best|top|highest\s+rated)\s+([\w\s]+)\s+(?:movie|film)(?:s)?': self._handle_top_rated_genre,
+            r'(?:movie|film)(?:s)?\s+similar\s+to\s+([\w\s]+)': self._handle_similar_movie,
+            r'help': self._handle_help,
+            r'(?:how\s+to\s+use|instructions|commands)': self._handle_help,
+            r'(?:exit|quit|bye|goodbye)': self._handle_exit
+        }
         
+        # More generic patterns to catch other types of queries
+        self.fallback_patterns = {
+            r'([\w\s]+)\s+(?:movie|film)(?:s)?': self._handle_generic_query,
+            r'': self._handle_unknown_query  # Empty pattern as fallback
+        }
+    
     def preprocess_data(self):
         """Clean and preprocess the data."""
         try:
@@ -292,193 +315,247 @@ class MovieRecommender:
             
             # Get top n+1 (including the movie itself)
             sim_scores = sim_scores[:n+1]
+            # Convert indices to movie IDs and filter out the input movie
+            rec_movie_indices = [self._index_to_movie_id(i[0]) for i in sim_scores]
+            rec_movie_indices = [i for i in rec_movie_indices if i != movie_id]
             
-            # Skip the first result if it's the input movie itself
-            if sim_scores[0][1] > 0.99:  # Almost identical, probably the same movie
-                sim_scores = sim_scores[1:n+1]
-            else:
-                sim_scores = sim_scores[:n]
+            # Get the top n recommendations
+            recommendations = self.df.loc[rec_movie_indices].head(n)
             
-            # Convert matrix indices to movie dataframe indices
-            movie_indices = [self._index_to_movie_id(i[0]) for i in sim_scores]
-            movie_indices = [idx for idx in movie_indices if idx is not None]
+            # Format the recommendations
+            result = f"Based on '{matched_movie['original_title']}', here are some recommendations:\n\n"
+            for i, (_, row) in enumerate(recommendations.iterrows(), 1):
+                year = int(row['release_year']) if not pd.isna(row['release_year']) else 'Unknown'
+                rating = round(row['vote_average'], 1) if not pd.isna(row['vote_average']) else 'N/A'
+                result += f"{i}. {row['original_title']} ({year}) - Rating: {rating}/10\n"
             
-            # Get the recommended movies
-            recommendations = self.df.loc[movie_indices][['original_title', 'overview', 'vote_average', 'vote_count']]
+            return result
             
-            if recommendations.empty:
-                return f"No similar movies found for '{title}'."
-                
-            return recommendations
         except Exception as e:
             print(f"Error in get_recommendations_by_title: {e}")
-            return f"Error finding recommendations for '{title}': {str(e)}"
+            return "Sorry, I couldn't generate recommendations based on that title. Please try another movie."
     
     def _string_similarity(self, str1, str2):
-        """Calculate string similarity ratio for fuzzy title matching."""
-        # Simple method using longest common substring
-        if not str1 or not str2:
+        """Calculate string similarity between 0 and 1."""
+        # Simple fuzzy matching
+        str1, str2 = str1.lower(), str2.lower()
+        
+        # Exact match
+        if str1 == str2:
+            return 1.0
+        
+        # Check if one is contained in the other
+        if str1 in str2 or str2 in str1:
+            return 0.8
+        
+        # Compute word-level overlap
+        words1 = set(str1.split())
+        words2 = set(str2.split())
+        
+        if not words1 or not words2:
             return 0
             
-        if str1 in str2 or str2 in str1:
-            return 0.9
-            
-        # Count matching characters
-        matches = sum(c1 == c2 for c1, c2 in zip(str1, str2))
-        return matches / max(len(str1), len(str2))
+        overlap = len(words1.intersection(words2))
+        return overlap / max(len(words1), len(words2))
     
-    def get_recommendations_by_genre(self, genre_query, n=5, min_votes=50):
-        """Get recommendations based on genre keywords."""
+    def get_recommendations_by_genre(self, genre, n=5):
+        """Get recommendations based on a genre keyword."""
         try:
-            # Identify which genre keywords match the query
-            matching_genres = []
-            for genre, keywords in self.genre_keywords.items():
-                for keyword in keywords:
-                    if keyword in genre_query.lower():
-                        matching_genres.append(genre)
-                        break
+            # Create a genre-specific query
+            genre_terms = self.genre_keywords.get(genre.lower(), [genre.lower()])
             
-            if not matching_genres:
-                return "Could not identify a specific genre from your query."
+            # Create a combined query text
+            query_text = ' '.join(genre_terms)
             
-            print(f"Identified genres: {matching_genres}")
+            # Clean the query
+            cleaned_query = self.clean_text(query_text)
             
-            # Filter movies with minimum votes
-            # First ensure vote_count is numeric
-            self.df['vote_count'] = pd.to_numeric(self.df['vote_count'], errors='coerce').fillna(0)
-            filtered_df = self.df[self.df['vote_count'] >= min_votes]
+            # Transform the query with our existing TF-IDF vectorizer
+            query_vec = self.tfidf.transform([cleaned_query])
             
-            if filtered_df.empty:
-                print(f"No movies found with at least {min_votes} votes. Reducing threshold.")
-                # If no movies with the minimum votes, try with fewer votes
-                min_votes = 0
-                filtered_df = self.df
+            # Calculate similarity with all movies
+            sim_scores = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
             
-            # Create a search query from the genre keywords
-            search_query = ' '.join([' '.join(self.genre_keywords[genre]) for genre in matching_genres])
+            # Get indices of movies sorted by similarity
+            sim_indices = sim_scores.argsort()[::-1]
             
-            # Transform the search query using the fitted TF-IDF vectorizer
-            query_vector = self.tfidf.transform([self.clean_text(search_query)])
+            # Convert matrix indices to movie IDs
+            movie_indices = [self._index_to_movie_id(idx) for idx in sim_indices[:n+5]]
             
-            # Compute cosine similarity between the query and all movies
-            cosine_similarities = cosine_similarity(query_vector, self.tfidf_matrix).flatten()
+            # Filter out any None values (if any conversion failed)
+            movie_indices = [idx for idx in movie_indices if idx is not None]
             
-            # Create a dataframe with similarity scores
-            sim_scores = list(enumerate(cosine_similarities))
+            # Get recommendations with a minimum threshold on vote count and rating
+            recommendations = self.df.loc[movie_indices]
+            recommendations = recommendations[recommendations['vote_count'] >= 20]
+            recommendations = recommendations.sort_values('vote_average', ascending=False).head(n)
             
-            # Filter to only include movies from the filtered dataframe
-            sim_scores = [(i, score) for i, score in sim_scores if i in filtered_df.index]
+            # Format the recommendations
+            result = f"Top {genre} movies you might enjoy:\n\n"
+            for i, (_, row) in enumerate(recommendations.iterrows(), 1):
+                year = int(row['release_year']) if not pd.isna(row['release_year']) else 'Unknown'
+                rating = round(row['vote_average'], 1) if not pd.isna(row['vote_average']) else 'N/A'
+                result += f"{i}. {row['original_title']} ({year}) - Rating: {rating}/10\n"
             
-            # Sort by similarity score
-            sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+            return result
             
-            # Get top n recommendations
-            top_n = sim_scores[:n]
-            
-            if not top_n:
-                return f"No recommendations found for '{genre_query}'."
-                
-            # Get the indices of the top recommendations
-            movie_indices = [i[0] for i in top_n]
-            
-            # Return the top n movies
-            recommended_movies = self.df.iloc[movie_indices][['original_title', 'overview', 'vote_average', 'vote_count']]
-            
-            if recommended_movies.empty:
-                return f"No matching movies found for '{genre_query}'."
-                
-            return recommended_movies
         except Exception as e:
             print(f"Error in get_recommendations_by_genre: {e}")
-            return f"Error finding recommendations for '{genre_query}': {str(e)}"
+            return f"Sorry, I couldn't find good {genre} movie recommendations. Please try another genre."
     
-    def format_recommendation(self, movie):
-        """Format a movie recommendation as a string."""
+    def get_top_rated_movies(self, genre=None, n=5, min_votes=100):
+        """Get top rated movies, optionally filtered by genre."""
         try:
-            title = movie['original_title']
-            overview = movie['overview']
-            rating = movie['vote_average']
-            votes = movie['vote_count']
+            # Start with all movies that have sufficient votes
+            qualified = self.df[self.df['vote_count'] >= min_votes].copy()
             
-            sentiment = self.get_sentiment_description(rating)
+            if len(qualified) == 0:
+                return "Not enough rated movies in the database to make recommendations."
             
-            formatted = f"Title: {title}\n"
-            formatted += f"Rating: {rating}/10 ({votes} votes)\n"
-            formatted += f"What people say: {sentiment}\n"
-            formatted += f"Overview: {overview}\n"
+            # If genre is specified, filter by genre
+            if genre:
+                # Create a genre-specific query
+                genre_terms = self.genre_keywords.get(genre.lower(), [genre.lower()])
+                query_text = ' '.join(genre_terms)
+                
+                # Clean and vectorize the query
+                cleaned_query = self.clean_text(query_text)
+                query_vec = self.tfidf.transform([cleaned_query])
+                
+                # Find movies similar to the genre query
+                sim_scores = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
+                
+                # Get valid indices above a threshold
+                valid_indices = [i for i, score in enumerate(sim_scores) if score > 0.1]
+                valid_movie_ids = [self._index_to_movie_id(idx) for idx in valid_indices]
+                
+                # Filter the qualified movies by these IDs
+                qualified = qualified[qualified.index.isin(valid_movie_ids)]
             
-            return formatted
+            # Sort by rating
+            top_movies = qualified.sort_values('vote_average', ascending=False).head(n)
+            
+            # Format the results
+            if genre:
+                result = f"Top rated {genre} movies:\n\n"
+            else:
+                result = "Top rated movies across all genres:\n\n"
+                
+            for i, (_, row) in enumerate(top_movies.iterrows(), 1):
+                year = int(row['release_year']) if not pd.isna(row['release_year']) else 'Unknown'
+                rating = round(row['vote_average'], 1) if not pd.isna(row['vote_average']) else 'N/A'
+                votes = int(row['vote_count']) if not pd.isna(row['vote_count']) else 0
+                result += f"{i}. {row['original_title']} ({year}) - Rating: {rating}/10 ({votes} votes)\n"
+            
+            return result
+            
         except Exception as e:
-            print(f"Error in format_recommendation: {e}")
-            return "Error formatting recommendation."
+            print(f"Error in get_top_rated_movies: {e}")
+            return "Sorry, I couldn't retrieve top rated movies at this time."
     
-    def get_sentiment_description(self, rating):
-        """Get a sentiment description based on the rating."""
-        if rating >= 8.5:
-            return "Universally acclaimed as a masterpiece by critics and audiences alike."
-        elif rating >= 8.0:
-            return "Highly praised by viewers, considered an excellent film."
-        elif rating >= 7.5:
-            return "Very well received, audiences generally love this movie."
-        elif rating >= 7.0:
-            return "Quite popular, most viewers enjoy this film."
-        elif rating >= 6.5:
-            return "Generally favorable reviews, though with some mixed opinions."
-        elif rating >= 6.0:
-            return "Mixed reviews, but more positive than negative."
-        elif rating >= 5.5:
-            return "Somewhat mixed reviews, appeal may vary."
-        elif rating >= 5.0:
-            return "Average ratings, audiences are divided on this one."
-        else:
-            return "Below average ratings, not widely recommended."
-    
-    def recommend(self, user_query):
-        """Provide recommendations based on user query."""
-        # Check if the query is about a specific movie
-        title_match = re.search(r'like\s+(.*?)(?:\s+movie|\s+film|\s*$)', user_query, re.IGNORECASE)
+    def process_query(self, query):
+        """Process a natural language query and return recommendations."""
+        query = query.lower().strip()
         
-        if title_match:
-            # Get recommendations similar to the specified movie
-            movie_title = title_match.group(1).strip()
-            recommendations = self.get_recommendations_by_title(movie_title)
-            
-            if isinstance(recommendations, str):
-                return recommendations
-            
-            results = []
-            for _, movie in recommendations.iterrows():
-                results.append(self.format_recommendation(movie))
-            
-            return f"Based on your interest in '{movie_title}', here are some recommendations:\n\n" + "\n\n".join(results)
+        # Try to match the query against defined patterns
+        for pattern, handler in self.query_patterns.items():
+            match = re.search(pattern, query)
+            if match:
+                return handler(match)
+        
+        # If no match found, try fallback patterns
+        for pattern, handler in self.fallback_patterns.items():
+            match = re.search(pattern, query)
+            if match:
+                return handler(match)
+        
+        # Ultimate fallback
+        return self._handle_unknown_query(None)
+    
+    def _handle_similar_movie(self, match):
+        """Handle queries asking for movies similar to a specific title."""
+        movie_title = match.group(1).strip()
+        return self.get_recommendations_by_title(movie_title)
+    
+    def _handle_genre_query(self, match):
+        """Handle queries asking for movies of a specific genre."""
+        genre_term = match.group(1).strip()
+        
+        # Check if the genre term matches any of our genre keywords
+        for genre, keywords in self.genre_keywords.items():
+            if any(keyword in genre_term for keyword in keywords):
+                return self.get_recommendations_by_genre(genre)
+        
+        # If no specific genre matched, use the term directly
+        return self.get_recommendations_by_genre(genre_term)
+    
+    def _handle_top_rated_genre(self, match):
+        """Handle queries asking for top rated movies in a genre."""
+        genre_term = match.group(1).strip()
+        
+        # Check if the genre term matches any of our genre keywords
+        for genre, keywords in self.genre_keywords.items():
+            if any(keyword in genre_term for keyword in keywords):
+                return self.get_top_rated_movies(genre=genre)
+        
+        # If no specific genre matched, use the term directly
+        return self.get_top_rated_movies(genre=genre_term)
+    
+    def _handle_generic_query(self, match):
+        """Handle generic movie-related queries."""
+        query_term = match.group(1).strip()
+        
+        # Check if it might be a movie title
+        if len(query_term.split()) <= 4:  # Likely a movie title if few words
+            return self.get_recommendations_by_title(query_term)
         else:
-            # Get recommendations based on genre
-            recommendations = self.get_recommendations_by_genre(user_query)
-            
-            if isinstance(recommendations, str):
-                return recommendations
-            
-            results = []
-            for _, movie in recommendations.iterrows():
-                results.append(self.format_recommendation(movie))
-            
-            return f"Based on your query '{user_query}', here are some recommendations:\n\n" + "\n\n".join(results)
+            # Try to extract meaningful terms and treat as genre
+            return self.get_recommendations_by_genre(query_term)
+    
+    def _handle_help(self, _):
+        """Handle help requests."""
+        return """
+Movie Recommender Help:
+- Ask for movies similar to one you like: "Recommend movies like Inception"
+- Ask for movies in a specific genre: "Show me good action movies"
+- Ask for top rated movies: "Best comedy movies"
+- Just type a movie title to get similar recommendations
+
+Try phrases like:
+- "I want to watch a scary movie"
+- "Recommend movies like The Matrix"
+- "What are some good romantic films?"
+- "Top rated sci-fi movies"
+        """
+    
+    def _handle_exit(self, _):
+        """Handle exit requests."""
+        return "Goodbye! Come back when you need more movie recommendations."
+    
+    def _handle_unknown_query(self, _):
+        """Handle queries that don't match any patterns."""
+        return """
+I'm not sure what kind of movie you're looking for. You can:
+- Ask for movies similar to one you like
+- Ask for movies in a specific genre
+- Ask for top rated movies
+- Type 'help' for more information
+        """
+
 
 # Example usage
 if __name__ == "__main__":
-    # Create a recommender instance
-    recommender = MovieRecommender('top_rated_movies.csv')
+    recommender = MovieRecommender(data_path)
     
-    # Example queries
-    queries = [
-        "What is a funny movie I can watch?",
-        "Recommend a movie like The Godfather",
-        "I want to see a romantic comedy",
-        "What's a good action movie?",
-        "Suggest a movie with high ratings"
-    ]
+    print("\nMovie Recommender Initialized!")
+    print("Type your movie queries or 'exit' to quit.\n")
     
-    for query in queries:
-        print(f"Query: {query}")
-        print(recommender.recommend(query))
-        print("\n" + "="*50 + "\n")
+    while True:
+        user_input = input("What kind of movie would you like to watch? ")
+        
+        if user_input.lower() in ['exit', 'quit', 'bye']:
+            print("Thank you for using the Movie Recommender. Goodbye!")
+            break
+            
+        response = recommender.process_query(user_input)
+        print("\n" + response + "\n")
